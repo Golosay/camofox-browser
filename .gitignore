@@ -17,8 +17,9 @@ npm-debug.log*
 coverage/
 .nyc_output/
 
-# Build
-dist/
+# Build — ignore downloaded binaries but keep the placeholder for docker bind-mount
+dist/*
+!dist/.gitkeep
 build/
 
 # IDE

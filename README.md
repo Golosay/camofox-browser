@@ -7,6 +7,7 @@
     <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License" /></a>
     <a href="https://camoufox.com"><img src="https://img.shields.io/badge/engine-Camoufox-red" alt="Camoufox" /></a>
     <a href="https://hub.docker.com"><img src="https://img.shields.io/badge/docker-ready-blue" alt="Docker" /></a>
+    <a href="#docker"><img src="https://img.shields.io/badge/ARM64-native%20build-orange" alt="ARM64" /></a>
   </p>
   <p>
     Standing on the mighty shoulders of <a href="https://camoufox.com">Camoufox</a> - a Firefox fork with fingerprint spoofing at the C++ level.
@@ -14,6 +15,35 @@
     The same engine behind <a href="https://askjo.ai?ref=camofox">Jo</a> — an AI assistant that doesn't need you to babysit it. Runs half on your Mac, half on a dedicated cloud machine that only you use. Available on macOS, Telegram, and WhatsApp. <a href="https://askjo.ai?ref=camofox">Try the beta free →</a>
   </p>
 </div>
+
+---
+
+## About this fork
+
+This is a fork of [`jo-inc/camofox-browser`](https://github.com/jo-inc/camofox-browser).
+
+### Why this fork exists
+
+The upstream Dockerfile fails to build on ARM64 hosts (Oracle Cloud Ampere A1, AWS Graviton, Raspberry Pi 5) and also fails on any host when run from a fresh clone without `make fetch` pre-populating binaries. The core issues:
+
+1. `ARG ARCH=x86_64` hardcoded — on Ampere the bind-mount path resolves to `camoufox-x86_64.zip` which doesn't exist, failing with `unzip: cannot find /dist/camoufox-x86_64.zip`
+2. No `curl` fallback — if `dist/` is empty (fresh clone, no `make fetch`), the build immediately fails
+3. `dist/` not in the repo — a fresh `git clone` has no `dist/` directory, so the bind mount itself fails with `"/dist": not found`
+4. `postinstall: npx camoufox-js fetch` runs during `npm install --production` inside Docker, downloading the x86_64 Camoufox binary (~300 MB) regardless of target architecture
+
+This fork makes `docker build -t camofox-browser:local .` work natively on any architecture with zero preparation beyond `git clone`.
+
+### What's different
+
+| Area | Upstream | This fork |
+|---|---|---|
+| Architecture detection | `ARG ARCH=x86_64` — wrong on ARM64; needs `--build-arg ARCH=aarch64` | Auto-detected via Docker's built-in `TARGETARCH` |
+| `docker build .` standalone | Fails — needs `make fetch` to pre-populate `dist/` | Works — `curl` fallback downloads correct-arch binaries inside the build |
+| `dist/` on fresh clone | Missing directory — bind mount fails with `"/dist": not found` | `dist/.gitkeep` placeholder ensures directory always exists |
+| `dist/` in build context | No `.dockerignore` — fine | `.dockerignore` present but correctly includes `dist/` so bind mount is reachable |
+| `postinstall` in Docker build | Downloads x86_64 Camoufox during `npm install` | Suppressed with `NPM_CONFIG_IGNORE_SCRIPTS=true` |
+| Base image tag | `node:20-slim` (floating — silently updates) | `node:20-bookworm-slim` (pinned for reproducible builds) |
+| ARM64 tested | Not verified | Tested end-to-end on Oracle Cloud Ampere A1 (Ubuntu 22.04) |
 
 <br/>
 
@@ -82,27 +112,59 @@ Default port is `9377`. See [Environment Variables](#environment-variables) for 
 
 ### Docker
 
-The included `Makefile` auto-detects your CPU architecture and pre-downloads Camoufox + yt-dlp binaries outside the Docker build, so rebuilds are fast (~30s vs ~3min).
+The Dockerfile auto-detects architecture via BuildKit's `TARGETARCH` — the same image definition builds natively on both `amd64` (x86_64) and `arm64` (Ampere A1, Graviton, Raspberry Pi 5) with no flags required.
+
+#### Option A — simple, zero prep
+
+Works on a fresh clone. The build downloads the correct Camoufox (~670 MB) and yt-dlp binaries for your architecture inside Docker (~5 min first run, cached on subsequent builds).
 
 ```bash
-# Build and start (auto-detects arch: aarch64 on M1/M2, x86_64 on Intel)
-make up
-
-# Stop and remove the container
-make down
-
-# Force a clean rebuild (e.g. after upgrading VERSION/RELEASE)
-make reset
-
-# Just download binaries (without building)
-make fetch
-
-# Override arch or version explicitly
-make up ARCH=x86_64
-make up VERSION=135.0.1 RELEASE=beta.24
+git clone https://github.com/jo-inc/camofox-browser
+cd camofox-browser
+docker build -t camofox-browser:local .
+docker run -d --name camofox-browser --restart unless-stopped \
+  -p 9377:9377 camofox-browser:local
 ```
 
-Note: `make fetch` (or `make build`) must be run first — the Dockerfile expects pre-downloaded binaries in `dist/`.
+#### Option B — fast iterative builds with Make
+
+Pre-downloads binaries to `dist/` once. Subsequent builds reuse the cached files and finish in ~30 seconds.
+
+```bash
+make fetch        # auto-detects arch; use fetch-arm64 or fetch-x86 to be explicit
+make build        # builds using dist/ bind-mount (~30 s)
+make up           # runs the container on :9377
+```
+
+Other Make targets:
+
+```bash
+make down         # stop and remove the container
+make reset        # stop + remove + rebuild from scratch
+make clean        # delete dist/ binaries
+```
+
+**Upgrading Camoufox:** edit `VERSION` and `RELEASE` at the top of the `Makefile`, then run `make clean && make reset`.
+
+#### Verify the running container
+
+```bash
+curl http://localhost:9377/health
+# → {"status":"ok"}
+
+# Confirm native ARM64 (not QEMU emulation)
+docker exec camofox-browser uname -m
+# → aarch64
+```
+
+#### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `apt-get install` fails on `libasound2` or `libegl1-mesa` | Using the old upstream Dockerfile | Use this fork — packages are corrected |
+| "camoufox-bin not found after install" | Corrupted or wrong-arch zip in `dist/` | `make clean && make fetch && make build` |
+| Container crashes immediately | Insufficient memory | Add `-e MAX_OLD_SPACE_SIZE=256` to `docker run` |
+| Wrong architecture (QEMU emulation) | Image built on wrong-arch host | Build natively on the target machine; verify with `docker exec camofox-browser uname -m` |
 
 ### Fly.io / Railway
 

@@ -28,9 +28,11 @@ YTDLP_URL    := https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
 .PHONY: build build-arm64 build-x86 fetch fetch-arm64 fetch-x86 up down reset clean
 
 ## Build the Docker image for the current ARCH (default: x86_64)
+## ARCH is used only to locate the pre-downloaded files in dist/.
+## The Dockerfile derives the arch from Docker's built-in TARGETARCH (no --build-arg needed).
 build: fetch
+	@echo "Building $(IMAGE) (ARCH=$(ARCH))..."
 	docker build --no-cache \
-	  --build-arg ARCH=$(ARCH) \
 	  --build-arg CAMOUFOX_VERSION=$(VERSION) \
 	  --build-arg CAMOUFOX_RELEASE=$(RELEASE) \
 	  -t $(IMAGE) .

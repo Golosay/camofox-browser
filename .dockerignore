@@ -1,0 +1,53 @@
+# Keep build context lean — send only what the Dockerfile actually COPYs.
+
+# Source code (explicitly included via COPY in Dockerfile, so everything else is excluded below)
+
+# --- Exclude everything by default, then allow what's needed ---
+
+# Git internals
+.git/
+.github/
+
+# Dev dependencies and local installs
+node_modules/
+
+# Test suite — not needed in the image
+tests/
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Docs / meta (not COPYd by Dockerfile)
+README.md
+CHANGELOG.md
+*.md
+fox.png
+
+# Local config / secrets
+.env
+.env.*
+fly.toml
+railway.toml
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Scripts only used for local dev
+run.sh
+Makefile
+scripts/
+
+# Plugin files (not needed at runtime)
+plugin.ts
+openclaw.plugin.json
